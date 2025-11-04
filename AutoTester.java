@@ -422,13 +422,12 @@ public class AutoTester {
         if (value == null) {
             return;
         }
-        Set<Integer> variants = new TreeSet<>();
-        for (String token : value.split(",")) {
-            Integer parsed = tryParseInt(token.trim());
-            if (parsed != null && parsed > 0) {
-                variants.add(parsed);
-            }
-        }
+        Set<Integer> variants = Arrays.stream(value.split(","))
+                .map(String::trim)
+                .map(AutoTester::tryParseInt)
+                .filter(Objects::nonNull)
+                .filter(v -> v > 0)
+                .collect(Collectors.toCollection(TreeSet::new));
         if (!variants.isEmpty()) {
             config.variants = new ArrayList<>(variants);
         }
@@ -620,20 +619,15 @@ public class AutoTester {
         if (metrics == null || metrics.failureReasons.isEmpty()) {
             return null;
         }
-        Map<String, Integer> counts = new HashMap<>();
-        for (String reason : metrics.failureReasons) {
-            counts.merge(reason, 1, Integer::sum);
-        }
-        return counts.entrySet().stream()
-                .sorted((a, b) -> {
-                    int cmp = Integer.compare(b.getValue(), a.getValue());
-                    if (cmp != 0) {
-                        return cmp;
-                    }
-                    return a.getKey().compareTo(b.getKey());
-                })
+        return metrics.failureReasons.stream()
+                .collect(Collectors.groupingBy(r -> r, Collectors.counting()))
+                .entrySet().stream()
+                .sorted(Comparator
+                        .<Map.Entry<String, Long>>comparingLong(Map.Entry::getValue)
+                        .reversed()
+                        .thenComparing(Map.Entry::getKey))
                 .limit(2)
-                .map(entry -> entry.getValue() + "× " + entry.getKey())
+                .map(e -> e.getValue() + "× " + e.getKey())
                 .collect(Collectors.joining("; "));
     }
     
@@ -641,23 +635,19 @@ public class AutoTester {
         if (values == null || values.isEmpty()) {
             return new StatsSummary();
         }
-        List<Double> sorted = new ArrayList<>(values);
-        Collections.sort(sorted);
+        List<Double> sorted = values.stream().sorted().collect(Collectors.toList());
         double mean = sorted.stream().mapToDouble(Double::doubleValue).average().orElse(Double.NaN);
         int size = sorted.size();
-        double median;
-        if (size % 2 == 0) {
-            median = (sorted.get(size / 2 - 1) + sorted.get(size / 2)) / 2.0;
-        } else {
-            median = sorted.get(size / 2);
-        }
+        double median = (size % 2 == 0)
+                ? (sorted.get(size / 2 - 1) + sorted.get(size / 2)) / 2.0
+                : sorted.get(size / 2);
         double mode = computeModeForDoubles(sorted);
-        double variance = 0.0;
-        for (double value : sorted) {
-            double diff = value - mean;
-            variance += diff * diff;
-        }
-        variance /= size;
+        double variance = sorted.stream()
+                .mapToDouble(v -> {
+                    double d = v - mean;
+                    return d * d;
+                })
+                .sum() / size;
         double stdDev = Math.sqrt(variance);
         return new StatsSummary(mean, median, mode, stdDev);
     }
@@ -666,23 +656,19 @@ public class AutoTester {
         if (values == null || values.isEmpty()) {
             return new StatsSummary();
         }
-        List<Integer> sorted = new ArrayList<>(values);
-        Collections.sort(sorted);
+        List<Integer> sorted = values.stream().sorted().collect(Collectors.toList());
         double mean = sorted.stream().mapToInt(Integer::intValue).average().orElse(Double.NaN);
         int size = sorted.size();
-        double median;
-        if (size % 2 == 0) {
-            median = (sorted.get(size / 2 - 1) + sorted.get(size / 2)) / 2.0;
-        } else {
-            median = sorted.get(size / 2);
-        }
+        double median = (size % 2 == 0)
+                ? (sorted.get(size / 2 - 1) + sorted.get(size / 2)) / 2.0
+                : sorted.get(size / 2);
         double mode = computeModeForIntegers(sorted);
-        double variance = 0.0;
-        for (int value : sorted) {
-            double diff = value - mean;
-            variance += diff * diff;
-        }
-        variance /= size;
+        double variance = sorted.stream()
+                .mapToDouble(v -> {
+                    double d = v - mean;
+                    return d * d;
+                })
+                .sum() / size;
         double stdDev = Math.sqrt(variance);
         return new StatsSummary(mean, median, mode, stdDev);
     }
@@ -691,35 +677,29 @@ public class AutoTester {
         if (values.isEmpty()) {
             return Double.NaN;
         }
-        Map<Double, Integer> counts = new HashMap<>();
-        double mode = Double.NaN;
-        int maxCount = -1;
-        for (double value : values) {
-            double key = Math.round(value * 10.0) / 10.0;
-            int count = counts.merge(key, 1, Integer::sum);
-            if (count > maxCount || (count == maxCount && (Double.isNaN(mode) || key < mode))) {
-                maxCount = count;
-                mode = key;
-            }
-        }
-        return mode;
+        return values.stream()
+                .map(v -> Math.round(v * 10.0) / 10.0)
+                .collect(Collectors.groupingBy(v -> v, Collectors.counting()))
+                .entrySet().stream()
+                .max(Comparator
+                        .<Map.Entry<Double, Long>>comparingLong(Map.Entry::getValue)
+                        .thenComparing(Map.Entry::getKey))
+                .map(Map.Entry::getKey)
+                .orElse(Double.NaN);
     }
     
     static double computeModeForIntegers(List<Integer> values) {
         if (values.isEmpty()) {
             return Double.NaN;
         }
-        Map<Integer, Integer> counts = new HashMap<>();
-        int mode = 0;
-        int maxCount = -1;
-        for (int value : values) {
-            int count = counts.merge(value, 1, Integer::sum);
-            if (count > maxCount || (count == maxCount && value < mode)) {
-                maxCount = count;
-                mode = value;
-            }
-        }
-        return mode;
+        return values.stream()
+                .collect(Collectors.groupingBy(v -> v, Collectors.counting()))
+                .entrySet().stream()
+                .max(Comparator
+                        .<Map.Entry<Integer, Long>>comparingLong(Map.Entry::getValue)
+                        .thenComparing(Map.Entry::getKey))
+                .map(e -> (double) e.getKey())
+                .orElse(Double.NaN);
     }
     
     static String padRight(String value, int width) {
@@ -729,19 +709,15 @@ public class AutoTester {
         if (value.length() >= width) {
             return value;
         }
-        StringBuilder sb = new StringBuilder(value);
-        while (sb.length() < width) {
-            sb.append(' ');
-        }
-        return sb.toString();
+        int pad = width - value.length();
+        return value + repeat(" ", pad);
     }
     
     static String repeat(String value, int count) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < count; i++) {
-            sb.append(value);
-        }
-        return sb.toString();
+        if (count <= 0) return "";
+        return java.util.stream.IntStream.range(0, count)
+                .mapToObj(i -> value)
+                .collect(Collectors.joining());
     }
     
     static String formatNumber(double value) {
@@ -1182,18 +1158,23 @@ public class AutoTester {
                 char cell = grid[nx][ny];
                 
                 if (cell == 'G' && !foundGollum) {
-                    visible.add(nx + " " + ny + "G");
+                    // Report Gollum as a blocking/perceived entity: "x y G"
+                    visible.add(nx + " " + ny + " G");
                 } else if (cell == 'M' && foundGollum) {
-                    visible.add(nx + " " + ny + "M");
+                    // After Gollum is found, Mount Doom becomes visible: "x y M"
+                    visible.add(nx + " " + ny + " M");
                 } else if (cell == 'C' && nx == mithrilX && ny == mithrilY && !hasMithril) {
-                    visible.add(nx + "" + ny + "C");
+                    // Mithril location (if not yet collected): "x y C"
+                    visible.add(nx + " " + ny + " C");
                 } else {
                     for (Enemy e : enemies) {
                         if (e.x == nx && e.y == ny) {
-                            visible.add(nx + " " + ny + e.type);
+                            // Exact enemy position with type: "x y T"
+                            visible.add(nx + " " + ny + " " + e.type);
                             break;
                         } else if (isInPerceptionZone(nx, ny, e)) {
-                            visible.add(nx + " " + ny + "P");
+                            // Perception zone marker near an enemy: "x y P"
+                            visible.add(nx + " " + ny + " P");
                             break;
                         }
                     }
@@ -1243,12 +1224,8 @@ public class AutoTester {
     }
     
     static boolean hasEnemyWithin(int x, int y, int radius) {
-        for (Enemy enemy : enemies) {
-            if (Math.abs(x - enemy.x) + Math.abs(y - enemy.y) <= radius) {
-                return true;
-            }
-        }
-        return false;
+        return enemies.stream()
+                .anyMatch(enemy -> Math.abs(x - enemy.x) + Math.abs(y - enemy.y) <= radius);
     }
     
     static int distanceFromStart(int x, int y) {
